@@ -623,6 +623,12 @@ void RunTests(
         printf("  Inspector: %lu light rows, %lu chunks generated for heavy rows.\n\n", plan.light_rows.size(), plan.heavy_chunks.size());
     }
 
+    std::string base_name = mtx_filename;
+    size_t last_slash = base_name.find_last_of('/');
+    if (last_slash != std::string::npos) {
+        base_name = base_name.substr(last_slash + 1);
+    }
+
     if (!g_quiet) {
         printf("  %-7s %-15s %10s %10s %10s %10s %10s %s\n", "Threads", "Method", "Time(ms)", "GFLOPs", "BW(GB/s)", "Speedup", "Effic", "Status");
         printf("  --------------------------------------------------------------------------------------\n");
@@ -644,6 +650,25 @@ void RunTests(
     float sum_mrg_ms = 0.0, sum_hyb_ms = 0.0;
     int valid_runs = 0;
     int last_nt = -1;
+
+    // Check if CSV exists to write header
+    FILE *check_csv = fopen("spmv_results.csv", "r");
+    bool write_header = false;
+    if (!check_csv) {
+        write_header = true;
+    } else {
+        fseek(check_csv, 0, SEEK_END);
+        if (ftell(check_csv) == 0) write_header = true;
+        fclose(check_csv);
+    }
+    
+    if (write_header) {
+        FILE *csv = fopen("spmv_results.csv", "a");
+        if (csv) {
+            fprintf(csv, "Matrix,Rows,Cols,NNZ,LightRows,HeavyChunks,Threads,SeqTime_ms,SeqGFLOPs,MergeTime_ms,MergeGFLOPs,MergeBW_GBps,HybridTime_ms,HybridGFLOPs,HybridBW_GBps,MergeSpeedup,HybridSpeedup,MergeEfficiency,HybridEfficiency\n");
+            fclose(csv);
+        }
+    }
 
     for (int i = 0; i < n_tc; i++) {
         int nt = t_counts[i];
@@ -690,6 +715,17 @@ void RunTests(
             printf("  %-7s %-15s %9.2fx %9.2fx %9.2fx %9.2fx %9.2fx\n", 
                    "", "Advantage(H/M)", t_diff, g_diff, b_diff, s_diff, e_diff);
             printf("  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n");
+        }
+
+        FILE *csv = fopen("spmv_results.csv", "a");
+        if (csv) {
+            fprintf(csv, "%s,%d,%d,%d,%lu,%lu,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                    base_name.c_str(), csr_matrix.num_rows, csr_matrix.num_cols, csr_matrix.num_nonzeros,
+                    plan.light_rows.size(), plan.heavy_chunks.size(), nt,
+                    seq_time_ms, seq_gflops, merge_ms, mrg_gflops, mrg_bw,
+                    hybrid_ms, hyb_gflops, hyb_bw,
+                    mrg_speedup, hyb_speedup, mrg_eff, hyb_eff);
+            fclose(csv);
         }
     }
 
