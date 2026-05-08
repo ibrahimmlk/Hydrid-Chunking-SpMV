@@ -20,10 +20,10 @@
 #include <omp.h>
 
 /* ---- Configuration ------------------------------------------------------- */
-#define WARMUP_RUNS          3
-#define BENCH_RUNS           15
+#define WARMUP_RUNS          10
+#define BENCH_RUNS           30
 #define THRESHOLD_MULT       3.0    /* rows with nnz > THRESH*avg are "heavy" */
-#define CHUNK_SIZE           4096   /* Increased to completely hide atomic overhead */
+#define CHUNK_SIZE           1024   /* Increased to completely hide atomic overhead */
 
 /* ---- Timing -------------------------------------------------------------- */
 static double get_time_sec(void) {
@@ -396,8 +396,8 @@ static void analyse_matrix(const CSRMatrix *A, FILE *csv, int max_nt) {
 
     printf("  Sequential Baseline: %10.3f ms | %10.4f GFLOPs\n\n", seq_time_ms, seq_gflops);
 
-    printf("  %-7s %-15s %10s %10s %10s %10s %10s %s\n", "Threads", "Method", "Time(ms)", "GFLOPs", "BW(GB/s)", "Speedup", "Effic", "Status");
-    printf("  --------------------------------------------------------------------------------------\n");
+    printf("  %-7s %-15s %10s %10s %10s %10s %10s %15s %s\n", "Threads", "Method", "Time(ms)", "GFLOPs", "BW(GB/s)", "Speedup", "Effic", "Margin", "Status");
+    printf("  ------------------------------------------------------------------------------------------------------\n");
 
     int t_counts[] = {1, 2, 4, 8, 12, 16, 32, max_nt};
     int n_tc = sizeof(t_counts)/sizeof(t_counts[0]);
@@ -423,11 +423,23 @@ static void analyse_matrix(const CSRMatrix *A, FILE *csv, int max_nt) {
         double mrg_eff = mrg_speedup / nt;
         double hyb_eff = hyb_speedup / nt;
 
-        printf("  %-7d %-15s %10.3f %10.4f %10.2f %9.2fx %9.2f %s\n", 
-               nt, "Merge-based", rm.time_ms, rm.gflops, rm.bw_gbps, mrg_speedup, mrg_eff, rm.correct?"OK":"FAIL");
-        printf("  %-7d %-15s %10.3f %10.4f %10.2f %9.2fx %9.2f %s\n", 
-               nt, "Hybrid-Chunk", rh.time_ms, rh.gflops, rh.bw_gbps, hyb_speedup, hyb_eff, rh.correct?"OK":"FAIL");
-        printf("  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n");
+        double margin = rm.time_ms / rh.time_ms;
+        char mrg_margin[32] = "-";
+        char hyb_margin[32] = "-";
+        if (margin > 1.0) {
+            sprintf(hyb_margin, "Hybrid +%.2fx", margin);
+        } else if (margin < 1.0) {
+            sprintf(mrg_margin, "Merge +%.2fx", 1.0/margin);
+        } else {
+            sprintf(hyb_margin, "Tie");
+            sprintf(mrg_margin, "Tie");
+        }
+
+        printf("  %-7d %-15s %10.3f %10.4f %10.2f %9.2fx %9.2f %15s  %s\n", 
+               nt, "Merge-based", rm.time_ms, rm.gflops, rm.bw_gbps, mrg_speedup, mrg_eff, mrg_margin, rm.correct?"OK":"FAIL");
+        printf("  %-7d %-15s %10.3f %10.4f %10.2f %9.2fx %9.2f %15s  %s\n", 
+               nt, "Hybrid-Chunk", rh.time_ms, rh.gflops, rh.bw_gbps, hyb_speedup, hyb_eff, hyb_margin, rh.correct?"OK":"FAIL");
+        printf("  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n");
 
         fprintf(csv,"%s,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
                 A->name, A->num_rows, A->num_cols, A->nnz, plan.num_light, plan.num_chunks, nt,

@@ -1,1 +1,14 @@
+# Compiled executables
+spmv_benchmark
+
+# Datasets
 *.mtx
+
+# Benchmark results
+*.csv
+
+# Patch/Diff temporary files
+*.orig
+*.rej
+*.patch
+patch.c
