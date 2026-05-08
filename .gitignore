@@ -11,4 +11,5 @@ spmv_benchmark
 *.orig
 *.rej
 *.patch
+*.sh
 patch.c
