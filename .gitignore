@@ -14,3 +14,4 @@ cpp_benchmark
 *.patch
 *.sh
 patch.c
+*.zip

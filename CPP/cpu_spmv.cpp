@@ -1,3 +1,19 @@
+
+/******************************************************************************
+ * How to build:
+
+ * GCC (OMP is terrible)
+ *      g++ mergebased_spmv.cpp -lm -ffloat-store -O3 -fopenmp 
+        ./cpp_benchmark --mtx=soc-Epinions1.mtx
+ 
+ ******************************************************************************/
+
+
+//---------------------------------------------------------------------
+// SpMV comparison tool
+//---------------------------------------------------------------------
+
+
 #include <omp.h>
 
 #include <stdio.h>
@@ -34,7 +50,7 @@ struct int2
 
 
 
-/**
+/*
  * Counting iterator
  */
 template <
