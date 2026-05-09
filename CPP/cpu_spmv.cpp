@@ -571,7 +571,7 @@ static double MeasurePeakBandwidth(int nt) {
     return bw;
 }
 
-/**
+/*
  * Run tests
  */
 template <
