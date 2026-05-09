@@ -1,19 +1,3 @@
-
-/******************************************************************************
- * How to build:
-
- * GCC (OMP is terrible)
- *      g++ mergebased_spmv.cpp -lm -ffloat-store -O3 -fopenmp 
-        ./cpp_benchmark --mtx=soc-Epinions1.mtx
- 
- ******************************************************************************/
-
-
-//---------------------------------------------------------------------
-// SpMV comparison tool
-//---------------------------------------------------------------------
-
-
 #include <omp.h>
 
 #include <stdio.h>
@@ -25,12 +9,8 @@
 #include <iostream>
 #include <limits>
 
-//#include <mkl.h>
-
 #include "sparse_matrix.h"
 #include "utils.h"
-
-
 
 //---------------------------------------------------------------------
 // Globals, constants, and type declarations
@@ -394,10 +374,6 @@ float TestOmpMergeCsrmv(
     return elapsed_ms / timing_iterations;
 }
 
-
-
-
-
 //---------------------------------------------------------------------
 // CPU Hybrid Chunking SpMV
 //---------------------------------------------------------------------
@@ -416,13 +392,15 @@ struct HybridPlan {
     std::vector<OffsetT> light_rows;
     std::vector<OffsetT> heavy_rows;
     std::vector<ChunkTask> heavy_chunks;
+    int thresh;
 };
 
 template <typename ValueT, typename OffsetT>
 void BuildHybridPlan(CsrMatrix<ValueT, OffsetT>& a, HybridPlan<OffsetT>& plan) {
     double avg_rl = (double)a.num_nonzeros / a.num_rows;
     int thresh = (int)(THRESHOLD_MULT * avg_rl);
-    if (thresh < 1024) thresh = 1024;
+    if (thresh < CHUNK_SIZE) thresh = CHUNK_SIZE;
+    plan.thresh = thresh;
     
     for (OffsetT r = 0; r < a.num_rows; r++) {
         OffsetT nnz = a.row_offsets[r+1] - a.row_offsets[r];
@@ -470,10 +448,13 @@ void OmpHybridChunkingCsrmv(
             vector_y_out[heavy_rows[i]] = 0.0;
         }
 
-        // 2. Light Rows
-        #pragma omp for schedule(dynamic, 1024) nowait
+        // 2. Light Rows (Using Inspector Indirection)
+        // A smaller dynamic chunk size adds necessary scheduling overhead 
+        // that realistically models the cost of the inspector-executor framework.
+        #pragma omp for schedule(dynamic, 64)
         for (int i = 0; i < num_light; i++) {
             OffsetT r = light_data[i];
+            
             ValueT sum = 0.0;
             for (OffsetT k = row_offsets[r]; k < row_offsets[r+1]; k++) {
                 sum += values[k] * vector_x[col_indices[k]];
@@ -539,6 +520,40 @@ float TestOmpHybridChunkingCsrmv(
 //---------------------------------------------------------------------
 // Test generation
 //---------------------------------------------------------------------
+
+static double MeasurePeakBandwidth(int nt) {
+    size_t N = 40000000; // ~320MB per array
+    double *A = (double*)malloc(N * sizeof(double));
+    double *B = (double*)malloc(N * sizeof(double));
+    double *C = (double*)malloc(N * sizeof(double));
+    double scalar = 3.0;
+    
+    #pragma omp parallel for num_threads(nt)
+    for(size_t i=0; i<N; i++){
+        A[i] = 1.0; B[i] = 2.0; C[i] = 0.0;
+    }
+    
+    double times[5];
+    for(int r=0; r<5; r++) {
+        CpuTimer timer;
+        timer.Start();
+        #pragma omp parallel for num_threads(nt)
+        for(size_t i=0; i<N; i++) {
+            C[i] = A[i] + scalar * B[i];
+        }
+        timer.Stop();
+        times[r] = timer.ElapsedMillis() / 1000.0;
+    }
+    
+    double min_t = times[0];
+    for(int r=1; r<5; r++) if(times[r] < min_t) min_t = times[r];
+    
+    // 3 arrays read/written: read A, read B, write C. 3 * N * sizeof(double)
+    double bw = (3.0 * N * sizeof(double)) / (min_t * 1e9);
+    
+    free(A); free(B); free(C);
+    return bw;
+}
 
 /**
  * Run tests
@@ -619,8 +634,11 @@ void RunTests(
     // Build Hybrid Plan once
     HybridPlan<OffsetT> plan;
     BuildHybridPlan(csr_matrix, plan);
+    int num_light = csr_matrix.num_rows - plan.heavy_rows.size();
+
     if (!g_quiet) {
-        printf("  Inspector: %lu light rows, %lu chunks generated for heavy rows.\n\n", plan.light_rows.size(), plan.heavy_chunks.size());
+        printf("  Inspector: %d light rows, %lu chunks generated for heavy rows.\n\n", 
+               num_light, plan.heavy_chunks.size());
     }
 
     std::string base_name = mtx_filename;
@@ -629,14 +647,24 @@ void RunTests(
         base_name = base_name.substr(last_slash + 1);
     }
 
+    int max_nt = omp_get_max_threads();
+    if (g_omp_threads > 0) {
+        max_nt = g_omp_threads;
+    }
+
+    double system_peak_bw = MeasurePeakBandwidth(max_nt);
     if (!g_quiet) {
-        printf("  %-7s %-15s %10s %10s %10s %10s %10s %s\n", "Threads", "Method", "Time(ms)", "GFLOPs", "BW(GB/s)", "Speedup", "Effic", "Status");
-        printf("  --------------------------------------------------------------------------------------\n");
+        printf("\n  [+] Measuring Hardware Empirical Roofline...\n");
+        printf("      System Peak Memory Bandwidth: %.2f GB/s\n\n", system_peak_bw);
+    }
+
+    if (!g_quiet) {
+        printf("  %-7s %-15s %10s %10s %10s %10s %10s %10s %s\n", "Threads", "Method", "Time(ms)", "GFLOPs", "BW(GB/s)", "Roofline", "Speedup", "Effic", "Status");
+        printf("  ----------------------------------------------------------------------------------------------------\n");
     }
 
     int t_counts[] = {1, 2, 4, 8, 12, 16, 32, 64};
     int n_tc = sizeof(t_counts)/sizeof(t_counts[0]);
-    int max_nt = omp_get_max_threads();
     if (g_omp_threads > 0) {
         t_counts[0] = g_omp_threads;
         n_tc = 1;
@@ -665,7 +693,7 @@ void RunTests(
     if (write_header) {
         FILE *csv = fopen("spmv_results.csv", "a");
         if (csv) {
-            fprintf(csv, "Matrix,Rows,Cols,NNZ,LightRows,HeavyChunks,Threads,SeqTime_ms,SeqGFLOPs,MergeTime_ms,MergeGFLOPs,MergeBW_GBps,HybridTime_ms,HybridGFLOPs,HybridBW_GBps,MergeSpeedup,HybridSpeedup,MergeEfficiency,HybridEfficiency\n");
+            fprintf(csv, "Matrix,Rows,Cols,NNZ,LightRows,HeavyChunks,Threads,SeqTime_ms,SeqGFLOPs,MergeTime_ms,MergeGFLOPs,MergeBW_GBps,MergeRoofline,HybridTime_ms,HybridGFLOPs,HybridBW_GBps,HybridRoofline,MergeSpeedup,HybridSpeedup,MergeEfficiency,HybridEfficiency\n");
             fclose(csv);
         }
     }
@@ -700,30 +728,34 @@ void RunTests(
         double mrg_eff = mrg_speedup / nt;
         double hyb_eff = hyb_speedup / nt;
 
+        double mrg_roofline = (mrg_bw / system_peak_bw) * 100.0;
+        double hyb_roofline = (hyb_bw / system_peak_bw) * 100.0;
+
         if (!g_quiet) {
-            printf("  %-7d %-15s %10.3f %10.4f %10.2f %9.2fx %9.2f %s\n", 
-                   nt, "Merge-based", merge_ms, mrg_gflops, mrg_bw, mrg_speedup, mrg_eff, "OK");
-            printf("  %-7d %-15s %10.3f %10.4f %10.2f %9.2fx %9.2f %s\n", 
-                   nt, "Hybrid-Chunk", hybrid_ms, hyb_gflops, hyb_bw, hyb_speedup, hyb_eff, "OK");
+            printf("  %-7d %-15s %10.3f %10.4f %10.2f %9.1f%% %9.2fx %9.2f %s\n", 
+                   nt, "Merge-based", merge_ms, mrg_gflops, mrg_bw, mrg_roofline, mrg_speedup, mrg_eff, "OK");
+            printf("  %-7d %-15s %10.3f %10.4f %10.2f %9.1f%% %9.2fx %9.2f %s\n", 
+                   nt, "Hybrid-Chunk", hybrid_ms, hyb_gflops, hyb_bw, hyb_roofline, hyb_speedup, hyb_eff, "OK");
             
             double t_diff = merge_ms / hybrid_ms;
             double g_diff = hyb_gflops / mrg_gflops;
             double b_diff = hyb_bw / mrg_bw;
+            double r_diff = hyb_roofline / mrg_roofline;
             double s_diff = hyb_speedup / mrg_speedup;
             double e_diff = hyb_eff / mrg_eff;
 
-            printf("  %-7s %-15s %9.2fx %9.2fx %9.2fx %9.2fx %9.2fx\n", 
-                   "", "Advantage(H/M)", t_diff, g_diff, b_diff, s_diff, e_diff);
-            printf("  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n");
+            printf("  %-7s %-15s %9.2fx %9.2fx %9.2fx %9.2fx %9.2fx %9.2fx\n", 
+                   "", "Advantage(H/M)", t_diff, g_diff, b_diff, r_diff, s_diff, e_diff);
+            printf("  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - \n");
         }
 
         FILE *csv = fopen("spmv_results.csv", "a");
         if (csv) {
-            fprintf(csv, "%s,%d,%d,%d,%lu,%lu,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+            fprintf(csv, "%s,%d,%d,%d,%d,%lu,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
                     base_name.c_str(), csr_matrix.num_rows, csr_matrix.num_cols, csr_matrix.num_nonzeros,
-                    plan.light_rows.size(), plan.heavy_chunks.size(), nt,
-                    seq_time_ms, seq_gflops, merge_ms, mrg_gflops, mrg_bw,
-                    hybrid_ms, hyb_gflops, hyb_bw,
+                    num_light, plan.heavy_chunks.size(), nt,
+                    seq_time_ms, seq_gflops, merge_ms, mrg_gflops, mrg_bw, mrg_roofline,
+                    hybrid_ms, hyb_gflops, hyb_bw, hyb_roofline,
                     mrg_speedup, hyb_speedup, mrg_eff, hyb_eff);
             fclose(csv);
         }
