@@ -142,3 +142,6 @@ Uses a two-phase **Inspector-Executor** model:
    - **Heavy rows:** Sliced into 1024-NZ chunks, processed collaboratively by all threads with `omp atomic` accumulation.
 
 This ensures fine-grained parallelism is applied **only where load imbalance actually exists**, avoiding the global overhead of Merge-path on already-balanced matrices.
+
+<!-- note: clarifying scope of fine-grained parallelism -->
+
