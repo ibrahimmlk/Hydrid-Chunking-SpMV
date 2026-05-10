@@ -143,5 +143,5 @@ Uses a two-phase **Inspector-Executor** model:
 
 This ensures fine-grained parallelism is applied **only where load imbalance actually exists**, avoiding the global overhead of Merge-path on already-balanced matrices.
 
-<!-- note: chunk size 1024 chosen empirically across test matrices -->
+<!-- note: dynamic schedule chunk of 64 used for light row processing -->
 
