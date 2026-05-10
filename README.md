@@ -143,5 +143,5 @@ Uses a two-phase **Inspector-Executor** model:
 
 This ensures fine-grained parallelism is applied **only where load imbalance actually exists**, avoiding the global overhead of Merge-path on already-balanced matrices.
 
-<!-- note: omp atomic accumulation used for heavy row collaboration -->
+<!-- note: single OpenMP region covers both light and heavy passes -->
 
