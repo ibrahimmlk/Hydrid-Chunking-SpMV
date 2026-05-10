@@ -1,59 +1,53 @@
 # SpMV Benchmark: Merge-based vs Optimized Hybrid Chunking
 
-This repository contains two implementations (C and C++) of a Sparse Matrix-Vector Multiplication (SpMV) benchmark. It compares the standard **Merge-based approach** (Merrill & Garland, SC16) against a proposed **Optimized Hybrid Chunking Method** designed to handle highly skewed, power-law distributed matrices (e.g., social networks, web graphs).
+This repository contains a high-performance C++ benchmarking framework for Sparse Matrix-Vector Multiplication (SpMV). It evaluates and compares two primary parallelization strategies:
+1.  **Merge-based SpMV** (Merrill & Garland, SC16): A state-of-the-art approach that balances non-zeros across threads.
+2.  **Optimized Hybrid Chunking**: A proposed method designed to mitigate bottlenecks in highly skewed, power-law distributed matrices (e.g., social networks, web graphs) by collaborative processing of "hub" rows.
 
-The codebase is organized into three main directories:
-- `C/` : Contains the standalone C implementation.
-- `CPP/` : Contains the official C++ benchmarking framework.
-- `datasets/` : Contains the `.mtx` (Matrix Market) format sparse matrices used for benchmarking.
+## Project Structure
+- `CPP/`: Contains the core C++ benchmarking source code and harness.
+- `datasets/`: Contains sparse matrices in `.mtx` (Matrix Market) format.
 
 ---
 
-## 1. C++ Benchmark Implementation
+## 1. Benchmarking Framework
 
-The `CPP/` directory contains the official C++ benchmark harness. This version is highly optimized and accurately measures scaling efficiency across multiple threads using OpenMP.
+The C++ implementation is the primary tool for performance analysis. It includes:
+*   **Empirical Roofline Evaluation**: Measures system peak memory bandwidth at startup to calculate "Roofline %" for each kernel.
+*   **Inspector-Executor Model**: Dynamically builds a hybrid execution plan for skewed matrices.
+*   **Automated CSV Logging**: Saves all performance metrics (GFLOPs, BW, Speedup, Efficiency) to `spmv_results.csv`.
 
 ### Compilation
-Open a terminal in the project root and run:
+Navigate to the `CPP/` directory and compile using `g++`:
 ```bash
 cd CPP
 g++ cpu_spmv.cpp -O3 -march=native -fopenmp -o cpp_benchmark
 ```
 
 ### Execution
-Run the compiled executable and point it to a matrix in the `datasets/` directory using the `--mtx=` flag:
+Run the benchmark on a specific dataset using the `--mtx=` flag:
 ```bash
 ./cpp_benchmark --mtx=../datasets/soc-Epinions1.mtx
 ```
 
-*Note: The C++ benchmark will automatically loop through available OpenMP thread counts and print a final comparison table indicating the winning algorithm based on average performance.*
+### Command Line Arguments
+*   `--mtx=<path>`: Path to the Matrix Market file (Required).
+*   `--threads=<N>`: Force a specific number of OpenMP threads (Optional).
+*   `--i=<N>`: Number of timing iterations (Default: 100).
+*   `--quiet`: Minimize console output for batch processing.
 
 ---
 
-## 2. C Benchmark Implementation
+## 2. Hardware Performance Evaluation
+The benchmark now includes a built-in hardware evaluation tool. Upon execution, it runs a STREAM-like benchmark to determine the **System Peak Memory Bandwidth**.
 
-The `C/` directory contains a standalone C implementation that generates detailed CSV reports, including memory bandwidth efficiency and peak GFLOPs scaling.
+*   **Roofline % Column:** In the result table, the `Roofline` column indicates how much of the hardware's theoretical bandwidth is being utilized.
+*   **Memory-Bound Analysis:** If a kernel achieves >70-80% Roofline, it is considered memory-bound, meaning performance is limited by the system's RAM speed rather than CPU compute power.
 
-### Compilation
-Open a terminal in the project root and run:
-```bash
-cd C
-gcc -O3 -march=native -fopenmp source.c -o spmv_benchmark -lm
-```
+---
 
-### Execution
-Pass one or more `.mtx` files as positional arguments to the executable:
-```bash
-./spmv_benchmark ../datasets/soc-Epinions1.mtx
-```
-To run it on all `.mtx` files in the dataset directory at once:
-```bash
-./spmv_benchmark ../datasets/*.mtx
-```
+## 3. Results Analysis
+After execution, a summary table is printed to the console, and detailed metrics are appended to `spmv_results.csv`. 
 
-### Output & Metrics (C Version)
-When you run the C benchmark, it will:
-1. **Measure System Peak Memory Bandwidth:** Runs a STREAM-like OpenMP triad benchmark.
-2. **Execute the Benchmark:** Iterates through various OpenMP thread counts (1, 2, 4, 8, etc.).
-3. **Print Results to Console:** Displays Execution Time (ms), GFLOPs, Achieved Bandwidth, Parallel Speedup, and Efficiency.
-4. **Generate a CSV:** Automatically writes all comprehensive metrics into `spmv_results.csv` in the current directory.
+*   **Merge-based Wins:** On regular matrices (meshes/grids like `ecology2`, `apache2`, `G3_circuit`) where workload is already balanced.
+*   **Hybrid Chunking Wins:** On irregular matrices (social networks like `Epinions`, `LiveJournal`) with high positive skewness and massive hub rows.

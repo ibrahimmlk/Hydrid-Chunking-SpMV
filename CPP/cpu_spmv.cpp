@@ -1,21 +1,5 @@
 
-/******************************************************************************
- * How to build:
-
- * GCC (OMP is terrible)
- *      g++ mergebased_spmv.cpp -lm -ffloat-store -O3 -fopenmp 
-        ./cpp_benchmark --mtx=soc-Epinions1.mtx
- 
- ******************************************************************************/
-
-
-//---------------------------------------------------------------------
-// SpMV comparison tool
-//---------------------------------------------------------------------
-
-
 #include <omp.h>
-
 #include <stdio.h>
 #include <vector>
 #include <algorithm>
@@ -37,7 +21,6 @@ bool                    g_verbose           = false;        // Whether to displa
 bool                    g_verbose2          = false;        // Whether to display input to console
 int                     g_omp_threads       = -1;           // Number of openMP threads
 
-
 //---------------------------------------------------------------------
 // Utility types
 //---------------------------------------------------------------------
@@ -47,8 +30,6 @@ struct int2
     int x;
     int y;
 };
-
-
 
 /*
  * Counting iterator
@@ -167,12 +148,9 @@ struct CountingInputIterator
     }
 };
 
-
-
 //---------------------------------------------------------------------
 // MergePath Search
 //---------------------------------------------------------------------
-
 
 /**
  * Computes the begin offsets into A and B for the specific diagonal
@@ -205,8 +183,6 @@ inline void MergePathSearch(
     path_coordinate.x = std::min(x_min, a_len);
     path_coordinate.y = diagonal - x_min;
 }
-
-
 
 //---------------------------------------------------------------------
 // SpMV verification
@@ -265,14 +241,9 @@ float TestSpmvGold(
     return elapsed_ms / seq_iters;
 }
 
-
-
-
-
 //---------------------------------------------------------------------
 // CPU merge-based SpMV
 //---------------------------------------------------------------------
-
 
 /**
  * OpenMP CPU merge-based SpMV
@@ -342,7 +313,6 @@ void OmpMergeCsrmv(
             vector_y_out[row_carry_out[tid]] += value_carry_out[tid];
     }
 }
-
 
 /**
  * Run OmpMergeCsrmv
@@ -794,8 +764,6 @@ void RunTests(
     delete[] vector_y_out;
     delete[] reference_vector_y_out;
 }
-
-
 
 /**
  * Main
