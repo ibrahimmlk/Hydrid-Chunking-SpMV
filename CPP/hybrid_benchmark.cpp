@@ -22,76 +22,17 @@
 
 #include "sparse_matrix.h"
 #include "utils.h"
+#include "merge_spmv.h"   // Merge-based SpMV — extracted directly from Merrill & Garland (cpu_spmv.cpp)
 
 // -----------------------------------------------------------------------------
 // Globals
 // -----------------------------------------------------------------------------
-bool g_quiet   = false;
-bool g_verbose = false;
+bool g_quiet    = false;
+bool g_verbose  = false;
 bool g_verbose2 = false;
 int  g_omp_threads = -1;
 
-// -----------------------------------------------------------------------------
-// Utility: int2
-// -----------------------------------------------------------------------------
-struct int2 { int x, y; };
-
-// -----------------------------------------------------------------------------
-// CountingInputIterator (needed by MergePath)
-// -----------------------------------------------------------------------------
-template <typename ValueT, typename OffsetT = ptrdiff_t>
-struct CountingInputIterator {
-    typedef CountingInputIterator   self_type;
-    typedef ValueT                  value_type;
-    typedef ValueT&                 reference;
-    typedef ValueT*                 pointer;
-    typedef std::random_access_iterator_tag iterator_category;
-    typedef OffsetT                 difference_type;
-
-    ValueT val;
-    CountingInputIterator(const ValueT &val) : val(val) {}
-    self_type operator+(OffsetT n) const { return CountingInputIterator(val + n); }
-    value_type operator[](OffsetT n) const { return val + n; }
-};
-
-// -----------------------------------------------------------------------------
-// MergePathSearch
-// -----------------------------------------------------------------------------
-template <typename AIteratorT, typename BIteratorT, typename OffsetT, typename CoordinateT>
-void MergePathSearch(
-    OffsetT diagonal, AIteratorT a, BIteratorT b,
-    OffsetT a_len, OffsetT b_len, CoordinateT &path_coordinate)
-{
-    OffsetT x_min = std::max(diagonal - b_len, (OffsetT)0);
-    OffsetT x_max = std::min(diagonal, a_len);
-    while (x_min < x_max) {
-        OffsetT x_pivot = (x_min + x_max) >> 1;
-        if (a[x_pivot] <= b[diagonal - x_pivot - 1])
-            x_min = x_pivot + 1;
-        else
-            x_max = x_pivot;
-    }
-    path_coordinate.x = std::min(x_min, a_len);
-    path_coordinate.y = diagonal - x_min;
-}
-
-// -----------------------------------------------------------------------------
-// Sequential Gold SpMV  y = alpha * A*x + beta * y_in
-// -----------------------------------------------------------------------------
-template <typename ValueT, typename OffsetT>
-void SpmvGold(
-    CsrMatrix<ValueT, OffsetT> &a,
-    ValueT *vector_x, ValueT *vector_y_in, ValueT *vector_y_out,
-    ValueT alpha, ValueT beta)
-{
-    for (OffsetT row = 0; row < a.num_rows; ++row) {
-        ValueT partial = beta * vector_y_in[row];
-        for (OffsetT off = a.row_offsets[row]; off < a.row_offsets[row+1]; ++off)
-            partial += alpha * a.values[off] * vector_x[a.column_indices[off]];
-        vector_y_out[row] = partial;
-    }
-}
-
+// TimeSequential — timing wrapper around SpmvGold (from merge_spmv.h)
 template <typename ValueT, typename OffsetT>
 float TimeSequential(
     CsrMatrix<ValueT, OffsetT> &a,
@@ -105,59 +46,10 @@ float TimeSequential(
     return t.ElapsedMillis() / n;
 }
 
+
 // -----------------------------------------------------------------------------
 // Merge-based SpMV (Merrill & Garland)
 // -----------------------------------------------------------------------------
-template <typename ValueT, typename OffsetT>
-void OmpMergeCsrmv(
-    int num_threads,
-    CsrMatrix<ValueT, OffsetT> &a,
-    OffsetT* __restrict row_end_offsets,
-    OffsetT* __restrict column_indices,
-    ValueT*  __restrict values,
-    ValueT*  __restrict vector_x,
-    ValueT*  __restrict vector_y_out)
-{
-    OffsetT row_carry_out[256];
-    ValueT  value_carry_out[256];
-
-    #pragma omp parallel for schedule(static) num_threads(num_threads)
-    for (int tid = 0; tid < num_threads; tid++) {
-        CountingInputIterator<OffsetT> nonzero_indices(0);
-        OffsetT num_merge_items  = a.num_rows + a.num_nonzeros;
-        OffsetT items_per_thread = (num_merge_items + num_threads - 1) / num_threads;
-
-        int2 thread_coord, thread_coord_end;
-        int start_diagonal = std::min((OffsetT)(items_per_thread * tid), num_merge_items);
-        int end_diagonal   = std::min((OffsetT)(start_diagonal + items_per_thread), num_merge_items);
-
-        MergePathSearch(start_diagonal, row_end_offsets, nonzero_indices,
-                        a.num_rows, a.num_nonzeros, thread_coord);
-        MergePathSearch(end_diagonal, row_end_offsets, nonzero_indices,
-                        a.num_rows, a.num_nonzeros, thread_coord_end);
-
-        for (; thread_coord.x < thread_coord_end.x; ++thread_coord.x) {
-            ValueT running = 0.0;
-            for (; thread_coord.y < row_end_offsets[thread_coord.x]; ++thread_coord.y)
-                running += values[thread_coord.y] * vector_x[column_indices[thread_coord.y]];
-            vector_y_out[thread_coord.x] = running;
-        }
-
-        ValueT running = 0.0;
-        for (; thread_coord.y < thread_coord_end.y; ++thread_coord.y)
-            running += values[thread_coord.y] * vector_x[column_indices[thread_coord.y]];
-
-        row_carry_out[tid]   = thread_coord_end.x;
-        value_carry_out[tid] = running;
-    }
-
-    // Fix-up: accumulate partial sums left across thread boundaries
-    for (int tid = 0; tid < num_threads - 1; tid++) {
-        if (row_carry_out[tid] < a.num_rows)
-            vector_y_out[row_carry_out[tid]] += value_carry_out[tid];
-    }
-}
-
 template <typename ValueT, typename OffsetT>
 float TimeMerge(
     int nt,
