@@ -1,6 +1,7 @@
 # Compiled executables
 spmv_benchmark
 cpp_benchmark
+hybrid_benchmark
 
 # Datasets
 *.mtx
