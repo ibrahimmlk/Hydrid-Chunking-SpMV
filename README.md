@@ -143,5 +143,5 @@ Uses a two-phase **Inspector-Executor** model:
 
 This ensures fine-grained parallelism is applied **only where load imbalance actually exists**, avoiding the global overhead of Merge-path on already-balanced matrices.
 
-<!-- TODO: revisit threshold heuristic for heavy rows -->
+<!-- TODO: maybe document threshold tuning in section above -->
 
