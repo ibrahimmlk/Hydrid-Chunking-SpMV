@@ -164,6 +164,11 @@ void SpmvGold(
 // CPU Merge-based SpMV (from Merrill & Garland's original code)
 //---------------------------------------------------------------------
 
+// Profiling hook: when this is true, the merge kernel records per-thread
+// work time into g_thread_times[]. Defined in hybrid_benchmark.cpp.
+extern bool   g_profile_load_balance;
+extern double g_thread_times[256];
+
 /**
  * OpenMP CPU merge-based SpMV
  */
@@ -184,6 +189,7 @@ void OmpMergeCsrmv(
     #pragma omp parallel for schedule(static) num_threads(num_threads)
     for (int tid = 0; tid < num_threads; tid++)
     {
+        double t_start = g_profile_load_balance ? omp_get_wtime() : 0.0;
         // Merge list B (NZ indices)
         CountingInputIterator<OffsetT>  nonzero_indices(0);
 
@@ -222,6 +228,12 @@ void OmpMergeCsrmv(
         // Save carry-outs
         row_carry_out[tid]   = thread_coord_end.x;
         value_carry_out[tid] = running_total;
+
+        // Record per-thread work time. The serial fix-up below runs on tid 0
+        // only and is excluded - this measures pure parallel work imbalance.
+        // ACCUMULATE across calls to overcome Windows 1ms wtime resolution.
+        if (g_profile_load_balance)
+            g_thread_times[tid] += omp_get_wtime() - t_start;
     }
 
     // Carry-out fix-up (rows spanning multiple threads)
